@@ -45,11 +45,13 @@ typedef struct sf_view_t {
   uint32_t selected_entry;
   uint32_t entry_count;
   sf_entry_t *entries;
+  uint32_t *pos_stack;
+  uint32_t *offset_stack;
+  uint32_t stack_size;
 } sf_view_t;
 
 typedef struct sf_pane_t {
   WINDOW *window;
-  int y_scrolloff;
 } sf_pane_t;
 
 // Path when the program was launched
@@ -101,6 +103,21 @@ void sf_spawn(char *const argv[], uint32_t flags) {
   }
 }
 
+uint32_t sf_get_path_level(const char *path) {
+  uint32_t level = 0;
+
+  char rpath[PATH_MAX];
+  realpath(path, rpath);
+
+  for (uint32_t i = 0; i < strlen(rpath); i++) {
+    if (rpath[i] == '/') {
+      level++;
+    }
+  }
+
+  return level - 1;
+}
+
 int sf_entry_cmp(const void *a, const void *b) {
   sf_entry_t *entry_a = (sf_entry_t *)a;
   sf_entry_t *entry_b = (sf_entry_t *)b;
@@ -123,7 +140,7 @@ void sf_get_entries(
   if (d) {
     *entry_count = 0;
     while ((dir = readdir(d)) != NULL) {
-      if (strcmp(dir->d_name, ".") != 0) {
+      if (strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0) {
         (*entry_count)++;
       }
     }
@@ -133,7 +150,7 @@ void sf_get_entries(
       uint32_t i = 0;
 
       while ((dir = readdir(d)) != NULL) {
-        if (strcmp(dir->d_name, ".") != 0) {
+        if (strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0) {
           uint32_t current = i++;
           strncpy(entries[current].name, dir->d_name, strlen(dir->d_name) + 1);
 
@@ -187,17 +204,57 @@ void sf_pcolor_off(sf_pane_t *pane, short pair) {
   }
 }
 
+void sf_view_set_selected_entry(sf_view_t *view, uint32_t entry_index) {
+  view->selected_entry = entry_index;
+
+  if (entry_index >= view->entry_count) {
+    entry_index = view->entry_count - 1;
+  }
+
+  if (entry_index < 0) {
+    entry_index = 0;
+  }
+
+  uint32_t level = sf_get_path_level(view->path);
+  assert(level < view->stack_size);
+
+  view->pos_stack[level] = entry_index;
+
+  // When you change the current selected directory, reset the next one in
+  // the stack
+  assert((level + 1) < view->stack_size);
+  view->pos_stack[level + 1] = 0;
+  view->offset_stack[level + 1] = 0;
+}
+
 /*
  * This call should be used by the *internal* view functions when necessary.
  */
 void sf_view_update(sf_view_t *view) {
-  if (view->entries != NULL) {
-    free(view->entries);
+  sf_get_entries(".", &view->entry_count, NULL);
+  view->entries =
+      reallocarray(view->entries, sizeof(sf_entry_t), view->entry_count);
+  sf_get_entries(".", &view->entry_count, view->entries);
+
+  if (view->entry_count <= 1) {
+    sf_view_set_selected_entry(view, 0);
   }
 
-  sf_get_entries(".", &view->entry_count, NULL);
-  view->entries = malloc(sizeof(sf_entry_t) * view->entry_count);
-  sf_get_entries(".", &view->entry_count, view->entries);
+  uint32_t old_stack_size = view->stack_size;
+  view->stack_size = sf_get_path_level(view->path) + 2;
+
+  if (old_stack_size < view->stack_size) {
+    view->pos_stack =
+        reallocarray(view->pos_stack, view->stack_size, sizeof(uint32_t));
+
+    view->offset_stack =
+        reallocarray(view->offset_stack, view->stack_size, sizeof(uint32_t));
+
+    for (uint32_t i = old_stack_size; i < view->stack_size; i++) {
+      view->pos_stack[i] = 0;
+      view->offset_stack[i] = 0;
+    }
+  }
 }
 
 void sf_view_set_path(sf_view_t *view, const char *path) {
@@ -212,12 +269,24 @@ void sf_view_init(sf_view_t *view) {
   view->entries = NULL;
   view->selected_entry = 0;
   sf_view_set_path(view, sf_initial_path);
+
+  view->stack_size = sf_get_path_level(view->path) + 2;
+  view->pos_stack = calloc(view->stack_size, sizeof(uint32_t));
+  view->offset_stack = calloc(view->stack_size, sizeof(uint32_t));
+
+  for (uint32_t i = 0; i < view->stack_size; i++) {
+    view->pos_stack[i] = 0;
+    view->offset_stack[i] = 0;
+  }
 }
 
 void sf_view_destroy(sf_view_t *view) {
   if (view->entries != NULL) {
     free(view->entries);
   }
+
+  free(view->pos_stack);
+  free(view->offset_stack);
 }
 
 /*
@@ -234,7 +303,6 @@ void sf_set_view(uint32_t view_index) {
 
 void sf_pane_init(sf_pane_t *pane, int height, int width, int y, int x) {
   pane->window = newwin(height, width, y, x);
-  pane->y_scrolloff = 0;
 }
 
 void sf_pane_destroy(sf_pane_t *pane) { delwin(pane->window); }
@@ -305,15 +373,19 @@ void sf_draw_pane(sf_pane_t *pane) {
   int width, height;
   getmaxyx(pane->window, height, width);
 
-  if (view->selected_entry < pane->y_scrolloff) {
-    pane->y_scrolloff = view->selected_entry;
+  uint32_t level = sf_get_path_level(view->path);
+  assert(level < view->stack_size);
+  uint32_t *offset = &view->offset_stack[level];
+
+  if (view->selected_entry < *offset) {
+    *offset = view->selected_entry;
   }
 
-  if (view->selected_entry >= pane->y_scrolloff + height - 1) {
-    pane->y_scrolloff = view->selected_entry - height + 2;
+  if (view->selected_entry >= *offset + height - 1) {
+    *offset = view->selected_entry - height + 2;
   }
 
-  for (uint32_t i = pane->y_scrolloff; i < view->entry_count; i++) {
+  for (uint32_t i = *offset; i < view->entry_count; i++) {
     if (i == view->selected_entry) {
       wattron(pane->window, A_REVERSE);
     }
@@ -322,7 +394,7 @@ void sf_draw_pane(sf_pane_t *pane) {
       sf_pcolor_on(pane, SF_HIGHLIGHT_PAIR);
     }
 
-    int y = i - pane->y_scrolloff + 1;
+    int y = i - *offset + 1;
 
     mvwprintw(pane->window, y, 0, "%s", view->entries[i].name);
 
@@ -358,8 +430,11 @@ int main() {
     switch (c = getch()) {
     case 'h': {
       sf_view_set_path(view, "..");
-      // TODO: use a stack to keep track of past selected entries
-      view->selected_entry = 0;
+
+      assert(sf_get_path_level(view->path) < view->stack_size);
+      sf_view_set_selected_entry(
+          view, view->pos_stack[sf_get_path_level(view->path)]);
+
       break;
     }
     case 'l': {
@@ -368,8 +443,10 @@ int main() {
         char path[PATH_MAX];
         realpath(entry->name, path);
         sf_view_set_path(view, path);
-        // TODO: use a stack to keep track of past selected entries
-        view->selected_entry = 0;
+
+        assert(sf_get_path_level(view->path) < view->stack_size);
+        sf_view_set_selected_entry(
+            view, view->pos_stack[sf_get_path_level(view->path)]);
       } else if (entry->type == SF_ENTRY_FILE) {
         char path[PATH_MAX];
         realpath(entry->name, path);
@@ -384,14 +461,14 @@ int main() {
     case 'j': {
       // Move down
       if (view->selected_entry < view->entry_count - 1) {
-        view->selected_entry++;
+        sf_view_set_selected_entry(view, view->selected_entry + 1);
       }
       break;
     }
     case 'k': {
       // Move up
       if (view->selected_entry > 0) {
-        view->selected_entry--;
+        sf_view_set_selected_entry(view, view->selected_entry - 1);
       }
       break;
     }
