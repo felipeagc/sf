@@ -17,6 +17,7 @@
 #define SF_VIEW_COUNT 4
 
 #define SF_HIGHLIGHT_PAIR 1
+#define SF_EMPTY_PAIR 2
 
 #define SF_OPENER "xdg-open"
 #define SF_EDITOR "nvim"
@@ -104,10 +105,16 @@ void sf_spawn(char *const argv[], uint32_t flags) {
 }
 
 uint32_t sf_get_path_level(const char *path) {
-  uint32_t level = 0;
-
   char rpath[PATH_MAX];
   realpath(path, rpath);
+
+  assert(strlen(rpath) >= 1);
+
+  if (strlen(rpath) == 1) {
+    return 0;
+  }
+
+  uint32_t level = 0;
 
   for (uint32_t i = 0; i < strlen(rpath); i++) {
     if (rpath[i] == '/') {
@@ -115,7 +122,7 @@ uint32_t sf_get_path_level(const char *path) {
     }
   }
 
-  return level - 1;
+  return level;
 }
 
 int sf_entry_cmp(const void *a, const void *b) {
@@ -204,6 +211,24 @@ void sf_pcolor_off(sf_pane_t *pane, short pair) {
   }
 }
 
+void sf_view_update_stacks(sf_view_t *view) {
+  uint32_t old_stack_size = view->stack_size;
+  view->stack_size = sf_get_path_level(view->path) + 2;
+
+  if (old_stack_size < view->stack_size) {
+    view->pos_stack =
+        realloc(view->pos_stack, view->stack_size * sizeof(uint32_t));
+
+    view->offset_stack =
+        realloc(view->offset_stack, view->stack_size * sizeof(uint32_t));
+
+    for (uint32_t i = old_stack_size; i < view->stack_size; i++) {
+      view->pos_stack[i] = 0;
+      view->offset_stack[i] = 0;
+    }
+  }
+}
+
 void sf_view_set_selected_entry(sf_view_t *view, uint32_t entry_index) {
   view->selected_entry = entry_index;
 
@@ -214,6 +239,8 @@ void sf_view_set_selected_entry(sf_view_t *view, uint32_t entry_index) {
   if (entry_index < 0) {
     entry_index = 0;
   }
+
+  sf_view_update_stacks(view);
 
   uint32_t level = sf_get_path_level(view->path);
   assert(level < view->stack_size);
@@ -227,41 +254,27 @@ void sf_view_set_selected_entry(sf_view_t *view, uint32_t entry_index) {
   view->offset_stack[level + 1] = 0;
 }
 
-/*
- * This call should be used by the *internal* view functions when necessary.
- */
-void sf_view_update(sf_view_t *view) {
+void sf_view_update_entries(sf_view_t *view) {
   sf_get_entries(".", &view->entry_count, NULL);
   view->entries =
-      reallocarray(view->entries, sizeof(sf_entry_t), view->entry_count);
+      realloc(view->entries, sizeof(sf_entry_t) * view->entry_count);
   sf_get_entries(".", &view->entry_count, view->entries);
 
   if (view->entry_count <= 1) {
     sf_view_set_selected_entry(view, 0);
   }
-
-  uint32_t old_stack_size = view->stack_size;
-  view->stack_size = sf_get_path_level(view->path) + 2;
-
-  if (old_stack_size < view->stack_size) {
-    view->pos_stack =
-        reallocarray(view->pos_stack, view->stack_size, sizeof(uint32_t));
-
-    view->offset_stack =
-        reallocarray(view->offset_stack, view->stack_size, sizeof(uint32_t));
-
-    for (uint32_t i = old_stack_size; i < view->stack_size; i++) {
-      view->pos_stack[i] = 0;
-      view->offset_stack[i] = 0;
-    }
-  }
 }
 
 void sf_view_set_path(sf_view_t *view, const char *path) {
-  chdir(view->path);
-  realpath(path, view->path);
-  chdir(sf_views[sf_current_view].path);
-  sf_view_update(view);
+  char rpath[PATH_MAX];
+  realpath(path, rpath);
+  if (chdir(rpath) == 0) {
+    // Success
+    strncpy(view->path, rpath, strlen(rpath) + 1);
+    chdir(sf_views[sf_current_view].path);
+    sf_view_update_entries(view);
+    sf_view_update_stacks(view);
+  }
 }
 
 void sf_view_init(sf_view_t *view) {
@@ -331,6 +344,7 @@ void sf_init() {
     start_color();
 
     init_pair(SF_HIGHLIGHT_PAIR, COLOR_BLUE, COLOR_BLACK);
+    init_pair(SF_EMPTY_PAIR, COLOR_WHITE, COLOR_RED);
   }
 
   refresh();
@@ -363,7 +377,14 @@ void sf_draw_header() {
       printw(" ");
     }
   }
-  printw("] - %s\n", view->path);
+  printw("] - %s", view->path);
+
+  /* uint32_t level = sf_get_path_level(view->path); */
+  /* printw( */
+  /*     " - Pos: %d, Level: %d - Stack size: %d", */
+  /*     view->pos_stack[level], */
+  /*     level, */
+  /*     view->stack_size); */
 }
 
 void sf_draw_pane(sf_pane_t *pane) {
@@ -373,44 +394,49 @@ void sf_draw_pane(sf_pane_t *pane) {
   int width, height;
   getmaxyx(pane->window, height, width);
 
-  uint32_t level = sf_get_path_level(view->path);
-  assert(level < view->stack_size);
-  uint32_t *offset = &view->offset_stack[level];
+  if (view->entry_count == 0) {
+    sf_pcolor_on(pane, SF_EMPTY_PAIR);
+    mvwprintw(pane->window, 1, 0, "empty");
+    sf_pcolor_on(pane, SF_EMPTY_PAIR);
+  } else {
+    uint32_t level = sf_get_path_level(view->path);
+    assert(level < view->stack_size);
+    uint32_t *offset = &view->offset_stack[level];
 
-  if (view->selected_entry < *offset) {
-    *offset = view->selected_entry;
-  }
-
-  if (view->selected_entry >= *offset + height - 1) {
-    *offset = view->selected_entry - height + 2;
-  }
-
-  for (uint32_t i = *offset; i < view->entry_count; i++) {
-    if (i == view->selected_entry) {
-      wattron(pane->window, A_REVERSE);
+    if (view->selected_entry < *offset) {
+      *offset = view->selected_entry;
     }
 
-    if (view->entries[i].type == SF_ENTRY_DIRECTORY) {
-      sf_pcolor_on(pane, SF_HIGHLIGHT_PAIR);
+    if (view->selected_entry >= *offset + height - 1) {
+      *offset = view->selected_entry - height + 2;
     }
-
-    int y = i - *offset + 1;
-
-    mvwprintw(pane->window, y, 0, "%s", view->entries[i].name);
-
-    if (i == view->selected_entry) {
-      uint32_t spaces = width - strlen(view->entries[i].name);
-      for (uint32_t j = 0; j < spaces; j++) {
-        mvwprintw(pane->window, y, strlen(view->entries[i].name) + j, " ");
+    for (uint32_t i = *offset; i < view->entry_count; i++) {
+      if (i == view->selected_entry) {
+        wattron(pane->window, A_REVERSE);
       }
-    }
 
-    if (view->entries[i].type == SF_ENTRY_DIRECTORY) {
-      sf_pcolor_off(pane, SF_HIGHLIGHT_PAIR);
-    }
+      if (view->entries[i].type == SF_ENTRY_DIRECTORY) {
+        sf_pcolor_on(pane, SF_HIGHLIGHT_PAIR);
+      }
 
-    if (i == view->selected_entry) {
-      wattroff(pane->window, A_REVERSE);
+      int y = i - *offset + 1;
+
+      mvwprintw(pane->window, y, 0, "%s", view->entries[i].name);
+
+      if (i == view->selected_entry) {
+        uint32_t spaces = width - strlen(view->entries[i].name);
+        for (uint32_t j = 0; j < spaces; j++) {
+          mvwprintw(pane->window, y, strlen(view->entries[i].name) + j, " ");
+        }
+      }
+
+      if (view->entries[i].type == SF_ENTRY_DIRECTORY) {
+        sf_pcolor_off(pane, SF_HIGHLIGHT_PAIR);
+      }
+
+      if (i == view->selected_entry) {
+        wattroff(pane->window, A_REVERSE);
+      }
     }
   }
 
