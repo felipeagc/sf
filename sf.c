@@ -11,10 +11,14 @@
 
 #define SF_VIEW_COUNT 4
 
+typedef struct sf_entry_t {
+  char *name;
+} sf_entry_t;
+
 typedef struct sf_view_t {
   char path[PATH_MAX];
   uint32_t entry_count;
-  char **entries;
+  sf_entry_t *entries;
 } sf_view_t;
 
 // Path when the program was launched
@@ -26,23 +30,25 @@ uint32_t sf_current_view;
 
 sf_view_t sf_views[SF_VIEW_COUNT];
 
-void sf_get_files_and_dirs(const char *path, uint32_t *count, char **names) {
+void sf_get_entries(
+    const char *path, uint32_t *entry_count, sf_entry_t *entries) {
   DIR *d = opendir(path);
   struct dirent *dir;
   if (d) {
-    *count = 0;
+    *entry_count = 0;
     while ((dir = readdir(d)) != NULL) {
-      (*count)++;
+      (*entry_count)++;
     }
 
-    if (names != NULL) {
+    if (entries != NULL) {
       rewinddir(d);
       uint32_t i = 0;
 
       while ((dir = readdir(d)) != NULL) {
         uint32_t current = i++;
-        names[current] = malloc(sizeof(char) * (strlen(dir->d_name) + 1));
-        strncpy(names[current], dir->d_name, strlen(dir->d_name) + 1);
+        entries[current].name =
+            malloc(sizeof(char) * (strlen(dir->d_name) + 1));
+        strncpy(entries[current].name, dir->d_name, strlen(dir->d_name) + 1);
       }
     }
 
@@ -50,13 +56,26 @@ void sf_get_files_and_dirs(const char *path, uint32_t *count, char **names) {
   }
 }
 
+void sf_entry_destroy(sf_entry_t *entry) {
+  if (entry->name != NULL) {
+    free(entry->name);
+  }
+}
+
 /*
  * This call should be used by the *internal* view functions when necessary.
  */
 void sf_view_update(sf_view_t *view) {
-  sf_get_files_and_dirs(".", &view->entry_count, NULL);
-  view->entries = malloc(sizeof(char *) * view->entry_count);
-  sf_get_files_and_dirs(".", &view->entry_count, view->entries);
+  for (uint32_t i = 0; i < view->entry_count; i++) {
+    sf_entry_destroy(&view->entries[i]);
+  }
+  if (view->entries != NULL) {
+    free(view->entries);
+  }
+
+  sf_get_entries(".", &view->entry_count, NULL);
+  view->entries = malloc(sizeof(sf_entry_t) * view->entry_count);
+  sf_get_entries(".", &view->entry_count, view->entries);
 }
 
 void sf_view_set_path(sf_view_t *view, const char *path) {
@@ -73,6 +92,9 @@ void sf_view_init(sf_view_t *view) {
 }
 
 void sf_view_destroy(sf_view_t *view) {
+  for (uint32_t i = 0; i < view->entry_count; i++) {
+    sf_entry_destroy(&view->entries[i]);
+  }
   if (view->entries != NULL) {
     free(view->entries);
   }
@@ -115,7 +137,6 @@ void sf_draw() {
 
   for (uint32_t i = 0; i < view->entry_count; i++) {
     printw("%s\n", view->entries[i]);
-    free(view->entries[i]);
   }
 
   refresh();
