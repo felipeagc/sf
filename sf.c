@@ -1,18 +1,32 @@
 #include <assert.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <ncurses.h>
+#include <signal.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define SF_VIEW_COUNT 4
 
 #define SF_HIGHLIGHT_PAIR 1
+
+#define SF_OPENER "xdg-open"
+#define SF_EDITOR "nvim"
+
+/*
+ * sf_spawn flags
+ */
+#define SF_FLAG_NOTRACE 1 << 0 // Disable child output
+#define SF_FLAG_TERM 1 << 1    // Exit curses white process is running
+#define SF_FLAG_NOWAIT 1 << 2  // Don't wait for the child process to exit
 
 typedef enum sf_entry_type_t {
   SF_ENTRY_FILE,
@@ -42,6 +56,49 @@ uint32_t sf_current_view;
 
 sf_view_t sf_views[SF_VIEW_COUNT];
 
+/*
+ * argv must be either NULL or a NULL terminated array
+ */
+void sf_spawn(const char *file, char *const argv[], uint32_t flags) {
+  char *const empty_args[] = {NULL};
+  if (argv == NULL) {
+    argv = empty_args;
+  }
+
+  if (flags & SF_FLAG_TERM) {
+    endwin();
+  }
+
+  pid_t pid = fork();
+  if (pid == 0) {
+    // Disable child output
+    if (flags & SF_FLAG_NOTRACE) {
+      int fd = open("/dev/null", O_WRONLY, 0200);
+
+      dup2(fd, 1); // stdout
+      dup2(fd, 2); // stderr
+      close(fd);
+    }
+
+    if (flags & SF_FLAG_NOWAIT) {
+      signal(SIGHUP, SIG_IGN);
+      signal(SIGPIPE, SIG_IGN);
+      setsid();
+    }
+
+    execvp(file, argv);
+    _exit(1);
+  } else {
+    if (!(flags & SF_FLAG_NOWAIT))
+      /* Ignore interruptions */
+      while (waitpid(pid, NULL, 0) == -1) {
+      }
+    if (flags & SF_FLAG_TERM) {
+      refresh();
+    }
+  }
+}
+
 int sf_entry_cmp(const void *a, const void *b) {
   sf_entry_t *entry_a = (sf_entry_t *)a;
   sf_entry_t *entry_b = (sf_entry_t *)b;
@@ -57,8 +114,9 @@ int sf_entry_cmp(const void *a, const void *b) {
   return strcoll(entry_a->name, entry_b->name);
 }
 
-void sf_get_entries(
-    const char *path, uint32_t *entry_count, sf_entry_t *entries) {
+void sf_get_entries(const char *path,
+                    uint32_t *entry_count,
+                    sf_entry_t *entries) {
   DIR *d = opendir(path);
   struct dirent *dir;
   if (d) {
@@ -262,7 +320,11 @@ int main() {
         // TODO: use a stack to keep track of past selected entries
         view->selected_entry = 0;
       } else if (entry->type == SF_ENTRY_FILE) {
-        // TODO: handle opening files
+        char path[PATH_MAX];
+        realpath(entry->name, path);
+
+        char *const args[] = {"xdg-open", path, NULL};
+        sf_spawn("xdg-open", args, SF_FLAG_NOTRACE | SF_FLAG_NOWAIT);
       } else {
         // TODO: handle links and stuff
       }
@@ -280,6 +342,16 @@ int main() {
       if (view->selected_entry > 0) {
         view->selected_entry--;
       }
+      break;
+    }
+    case 'e': {
+      sf_entry_t *entry = &view->entries[view->selected_entry];
+
+      char path[PATH_MAX];
+      realpath(entry->name, path);
+
+      char *const args[] = {SF_EDITOR, path, NULL};
+      sf_spawn(SF_EDITOR, args, SF_FLAG_TERM);
       break;
     }
     case '1':
