@@ -35,6 +35,10 @@ uint32_t sf_current_view;
 
 sf_view_t sf_views[SF_VIEW_COUNT];
 
+int sf_entry_cmp(const void *a, const void *b) {
+  return strcoll(((sf_entry_t *)a)->name, ((sf_entry_t *)b)->name);
+}
+
 void sf_get_entries(
     const char *path, uint32_t *entry_count, sf_entry_t *entries) {
   DIR *d = opendir(path);
@@ -42,7 +46,9 @@ void sf_get_entries(
   if (d) {
     *entry_count = 0;
     while ((dir = readdir(d)) != NULL) {
-      (*entry_count)++;
+      if (strcmp(dir->d_name, ".") != 0) {
+        (*entry_count)++;
+      }
     }
 
     if (entries != NULL) {
@@ -50,12 +56,18 @@ void sf_get_entries(
       uint32_t i = 0;
 
       while ((dir = readdir(d)) != NULL) {
-        uint32_t current = i++;
-        strncpy(entries[current].name, dir->d_name, strlen(dir->d_name) + 1);
+        if (strcmp(dir->d_name, ".") != 0) {
+          uint32_t current = i++;
+          strncpy(entries[current].name, dir->d_name, strlen(dir->d_name) + 1);
+        }
       }
     }
 
     closedir(d);
+  }
+
+  if (entries != NULL) {
+    qsort(entries, *entry_count, sizeof(sf_entry_t), sf_entry_cmp);
   }
 }
 
