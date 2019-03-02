@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <dirent.h>
 #include <limits.h>
 #include <ncurses.h>
@@ -105,6 +106,13 @@ void sf_view_destroy(sf_view_t *view) {
  */
 void sf_view_activate(sf_view_t *view) { chdir(view->path); }
 
+void sf_set_view(uint32_t view_index) {
+  assert(view_index >= 0 && view_index < SF_VIEW_COUNT);
+  sf_current_view = view_index;
+
+  sf_view_activate(&sf_views[sf_current_view]);
+}
+
 void sf_init() {
   sf_should_quit = false;
 
@@ -114,10 +122,20 @@ void sf_init() {
     sf_view_init(&sf_views[i]);
   }
 
-  sf_current_view = 0;
-  sf_view_activate(&sf_views[sf_current_view]);
+  sf_set_view(0);
 
   initscr();
+
+  // TODO: handle lack of color support
+  if (has_colors() == FALSE) {
+    endwin();
+    printf("Your terminal does not support color\n");
+    exit(1);
+  }
+
+  start_color();
+
+  init_pair(1, COLOR_BLUE, COLOR_BLACK);
 }
 
 void sf_destroy() {
@@ -129,11 +147,22 @@ void sf_destroy() {
 
 void sf_draw() {
   clear();
-
   sf_view_t *view = &sf_views[sf_current_view];
 
-  printw("Current view: %d\n", sf_current_view);
-  printw("Path: %s\n", view->path);
+  printw("[");
+  for (uint32_t i = 0; i < SF_VIEW_COUNT; i++) {
+    if (i == sf_current_view) {
+      attron(COLOR_PAIR(1));
+    }
+    printw("%d", i + 1);
+    if (i == sf_current_view) {
+      attroff(COLOR_PAIR(1));
+    }
+    if (i + 1 < SF_VIEW_COUNT) {
+      printw(" ");
+    }
+  }
+  printw("] - %s\n", view->path);
 
   for (uint32_t i = 0; i < view->entry_count; i++) {
     printw("%s\n", view->entries[i]);
@@ -148,11 +177,27 @@ int main() {
   while (!sf_should_quit) {
     sf_draw();
 
-    switch (getch()) {
+    char c;
+    switch (c = getch()) {
     case 'h':
       sf_view_set_path(&sf_views[sf_current_view], "..");
       break;
-    default:
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+    case '7':
+    case '8':
+    case '9': {
+      uint32_t view_index = (uint32_t)(c - '1');
+      if (view_index >= 0 && view_index < SF_VIEW_COUNT) {
+        sf_set_view(view_index);
+      }
+      break;
+    }
+    case 'q':
       sf_should_quit = true;
       break;
     }
