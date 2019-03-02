@@ -16,7 +16,7 @@
 #define SF_SELECTED_PAIR 2
 
 typedef struct sf_entry_t {
-  char *name;
+  char name[NAME_MAX + 1];
 } sf_entry_t;
 
 typedef struct sf_view_t {
@@ -51,8 +51,6 @@ void sf_get_entries(
 
       while ((dir = readdir(d)) != NULL) {
         uint32_t current = i++;
-        entries[current].name =
-            malloc(sizeof(char) * (strlen(dir->d_name) + 1));
         strncpy(entries[current].name, dir->d_name, strlen(dir->d_name) + 1);
       }
     }
@@ -73,19 +71,10 @@ void sf_color_off(short pair) {
   }
 }
 
-void sf_entry_destroy(sf_entry_t *entry) {
-  if (entry->name != NULL) {
-    free(entry->name);
-  }
-}
-
 /*
  * This call should be used by the *internal* view functions when necessary.
  */
 void sf_view_update(sf_view_t *view) {
-  for (uint32_t i = 0; i < view->entry_count; i++) {
-    sf_entry_destroy(&view->entries[i]);
-  }
   if (view->entries != NULL) {
     free(view->entries);
   }
@@ -110,9 +99,6 @@ void sf_view_init(sf_view_t *view) {
 }
 
 void sf_view_destroy(sf_view_t *view) {
-  for (uint32_t i = 0; i < view->entry_count; i++) {
-    sf_entry_destroy(&view->entries[i]);
-  }
   if (view->entries != NULL) {
     free(view->entries);
   }
@@ -188,7 +174,7 @@ void sf_draw() {
     if (i == view->selected_entry) {
       sf_color_on(SF_SELECTED_PAIR);
     }
-    printw("%s\n", view->entries[i]);
+    printw("%s\n", view->entries[i].name);
     if (i == view->selected_entry) {
       sf_color_off(SF_SELECTED_PAIR);
     }
