@@ -13,10 +13,17 @@
 #define SF_VIEW_COUNT 4
 
 #define SF_HIGHLIGHT_PAIR 1
-#define SF_SELECTED_PAIR 2
+
+typedef enum sf_entry_type_t {
+  SF_ENTRY_FILE,
+  SF_ENTRY_DIRECTORY,
+  SF_ENTRY_LINK,
+  SF_ENTRY_UNKNOWN,
+} sf_entry_type_t;
 
 typedef struct sf_entry_t {
   char name[NAME_MAX + 1];
+  sf_entry_type_t type;
 } sf_entry_t;
 
 typedef struct sf_view_t {
@@ -36,7 +43,18 @@ uint32_t sf_current_view;
 sf_view_t sf_views[SF_VIEW_COUNT];
 
 int sf_entry_cmp(const void *a, const void *b) {
-  return strcoll(((sf_entry_t *)a)->name, ((sf_entry_t *)b)->name);
+  sf_entry_t *entry_a = (sf_entry_t *)a;
+  sf_entry_t *entry_b = (sf_entry_t *)b;
+
+  if (entry_a->type == SF_ENTRY_DIRECTORY && entry_b->type == SF_ENTRY_FILE) {
+    return -1;
+  }
+
+  if (entry_a->type == SF_ENTRY_FILE && entry_b->type == SF_ENTRY_DIRECTORY) {
+    return 1;
+  }
+
+  return strcoll(entry_a->name, entry_b->name);
 }
 
 void sf_get_entries(
@@ -59,6 +77,21 @@ void sf_get_entries(
         if (strcmp(dir->d_name, ".") != 0) {
           uint32_t current = i++;
           strncpy(entries[current].name, dir->d_name, strlen(dir->d_name) + 1);
+
+          switch (dir->d_type) {
+          case DT_REG:
+            entries[current].type = SF_ENTRY_FILE;
+            break;
+          case DT_DIR:
+            entries[current].type = SF_ENTRY_DIRECTORY;
+            break;
+          case DT_LNK:
+            entries[current].type = SF_ENTRY_LINK;
+            break;
+          default:
+            entries[current].type = SF_ENTRY_UNKNOWN;
+            break;
+          }
         }
       }
     }
@@ -151,7 +184,6 @@ void sf_init() {
     start_color();
 
     init_pair(SF_HIGHLIGHT_PAIR, COLOR_BLUE, COLOR_BLACK);
-    init_pair(SF_SELECTED_PAIR, COLOR_BLACK, COLOR_WHITE);
   }
 }
 
@@ -184,11 +216,21 @@ void sf_draw() {
 
   for (uint32_t i = 0; i < view->entry_count; i++) {
     if (i == view->selected_entry) {
-      sf_color_on(SF_SELECTED_PAIR);
+      attron(A_REVERSE);
     }
+
+    if (view->entries[i].type == SF_ENTRY_DIRECTORY) {
+      sf_color_on(SF_HIGHLIGHT_PAIR);
+    }
+
     printw("%s\n", view->entries[i].name);
+
+    if (view->entries[i].type == SF_ENTRY_DIRECTORY) {
+      sf_color_off(SF_HIGHLIGHT_PAIR);
+    }
+
     if (i == view->selected_entry) {
-      sf_color_off(SF_SELECTED_PAIR);
+      attroff(A_REVERSE);
     }
   }
 
@@ -207,6 +249,23 @@ int main() {
     switch (c = getch()) {
     case 'h': {
       sf_view_set_path(view, "..");
+      // TODO: use a stack to keep track of past selected entries
+      view->selected_entry = 0;
+      break;
+    }
+    case 'l': {
+      sf_entry_t *entry = &view->entries[view->selected_entry];
+      if (entry->type == SF_ENTRY_DIRECTORY) {
+        char path[PATH_MAX];
+        realpath(entry->name, path);
+        sf_view_set_path(view, path);
+        // TODO: use a stack to keep track of past selected entries
+        view->selected_entry = 0;
+      } else if (entry->type == SF_ENTRY_FILE) {
+        // TODO: handle opening files
+      } else {
+        // TODO: handle links and stuff
+      }
       break;
     }
     case 'j': {
