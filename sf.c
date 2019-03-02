@@ -162,13 +162,25 @@ void sf_get_entries(
   }
 }
 
-void sf_color_on(sf_pane_t *pane, short pair) {
+void sf_color_on(short pair) {
+  if (has_colors()) {
+    attron(COLOR_PAIR(pair));
+  }
+}
+
+void sf_color_off(short pair) {
+  if (has_colors()) {
+    attroff(COLOR_PAIR(pair));
+  }
+}
+
+void sf_pcolor_on(sf_pane_t *pane, short pair) {
   if (has_colors()) {
     wattron(pane->window, COLOR_PAIR(pair));
   }
 }
 
-void sf_color_off(sf_pane_t *pane, short pair) {
+void sf_pcolor_off(sf_pane_t *pane, short pair) {
   if (has_colors()) {
     wattroff(pane->window, COLOR_PAIR(pair));
   }
@@ -238,6 +250,7 @@ void sf_init() {
 
   initscr();
 
+  cbreak();
   raw();
 
   // Hide cursor
@@ -264,24 +277,28 @@ void sf_destroy() {
   endwin();
 }
 
-void sf_draw(sf_pane_t *pane) {
-  wclear(pane->window);
+void sf_draw_header() {
   sf_view_t *view = &sf_views[sf_current_view];
-
-  wprintw(pane->window, "[");
+  move(0, 0);
+  printw("[");
   for (uint32_t i = 0; i < SF_VIEW_COUNT; i++) {
     if (i == sf_current_view) {
-      sf_color_on(pane, SF_HIGHLIGHT_PAIR);
+      sf_color_on(SF_HIGHLIGHT_PAIR);
     }
-    wprintw(pane->window, "%d", i + 1);
+    printw("%d", i + 1);
     if (i == sf_current_view) {
-      sf_color_off(pane, SF_HIGHLIGHT_PAIR);
+      sf_color_off(SF_HIGHLIGHT_PAIR);
     }
     if (i + 1 < SF_VIEW_COUNT) {
-      wprintw(pane->window, " ");
+      printw(" ");
     }
   }
-  wprintw(pane->window, "] - %s\n", view->path);
+  printw("] - %s\n", view->path);
+}
+
+void sf_draw_pane(sf_pane_t *pane) {
+  wclear(pane->window);
+  sf_view_t *view = &sf_views[sf_current_view];
 
   for (uint32_t i = 0; i < view->entry_count; i++) {
     if (i == view->selected_entry) {
@@ -289,13 +306,25 @@ void sf_draw(sf_pane_t *pane) {
     }
 
     if (view->entries[i].type == SF_ENTRY_DIRECTORY) {
-      sf_color_on(pane, SF_HIGHLIGHT_PAIR);
+      sf_pcolor_on(pane, SF_HIGHLIGHT_PAIR);
     }
 
-    wprintw(pane->window, "%s\n", view->entries[i].name);
+    int y = i + 1;
+
+    mvwprintw(pane->window, y, 0, "%s", view->entries[i].name);
+
+    int width, height;
+    getmaxyx(pane->window, height, width);
+
+    if (i == view->selected_entry) {
+      uint32_t spaces = width - strlen(view->entries[i].name);
+      for (uint32_t j = 0; j < spaces; j++) {
+        mvwprintw(pane->window, y, strlen(view->entries[i].name) + j, " ");
+      }
+    }
 
     if (view->entries[i].type == SF_ENTRY_DIRECTORY) {
-      sf_color_off(pane, SF_HIGHLIGHT_PAIR);
+      sf_pcolor_off(pane, SF_HIGHLIGHT_PAIR);
     }
 
     if (i == view->selected_entry) {
@@ -310,7 +339,8 @@ int main() {
   sf_init();
 
   while (!sf_should_quit) {
-    sf_draw(&sf_main_pane);
+    sf_draw_header();
+    sf_draw_pane(&sf_main_pane);
 
     sf_view_t *view = &sf_views[sf_current_view];
 
