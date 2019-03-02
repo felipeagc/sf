@@ -49,6 +49,7 @@ typedef struct sf_view_t {
 
 typedef struct sf_pane_t {
   WINDOW *window;
+  int y_scrolloff;
 } sf_pane_t;
 
 // Path when the program was launched
@@ -233,6 +234,7 @@ void sf_set_view(uint32_t view_index) {
 
 void sf_pane_init(sf_pane_t *pane, int height, int width, int y, int x) {
   pane->window = newwin(height, width, y, x);
+  pane->y_scrolloff = 0;
 }
 
 void sf_pane_destroy(sf_pane_t *pane) { delwin(pane->window); }
@@ -300,7 +302,18 @@ void sf_draw_pane(sf_pane_t *pane) {
   wclear(pane->window);
   sf_view_t *view = &sf_views[sf_current_view];
 
-  for (uint32_t i = 0; i < view->entry_count; i++) {
+  int width, height;
+  getmaxyx(pane->window, height, width);
+
+  if (view->selected_entry < pane->y_scrolloff) {
+    pane->y_scrolloff = view->selected_entry;
+  }
+
+  if (view->selected_entry >= pane->y_scrolloff + height - 1) {
+    pane->y_scrolloff = view->selected_entry - height + 2;
+  }
+
+  for (uint32_t i = pane->y_scrolloff; i < view->entry_count; i++) {
     if (i == view->selected_entry) {
       wattron(pane->window, A_REVERSE);
     }
@@ -309,12 +322,9 @@ void sf_draw_pane(sf_pane_t *pane) {
       sf_pcolor_on(pane, SF_HIGHLIGHT_PAIR);
     }
 
-    int y = i + 1;
+    int y = i - pane->y_scrolloff + 1;
 
     mvwprintw(pane->window, y, 0, "%s", view->entries[i].name);
-
-    int width, height;
-    getmaxyx(pane->window, height, width);
 
     if (i == view->selected_entry) {
       uint32_t spaces = width - strlen(view->entries[i].name);
