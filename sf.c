@@ -59,12 +59,7 @@ sf_view_t sf_views[SF_VIEW_COUNT];
 /*
  * argv must be either NULL or a NULL terminated array
  */
-void sf_spawn(const char *file, char *const argv[], uint32_t flags) {
-  char *const empty_args[] = {NULL};
-  if (argv == NULL) {
-    argv = empty_args;
-  }
-
+void sf_spawn(char *const argv[], uint32_t flags) {
   if (flags & SF_FLAG_TERM) {
     endwin();
   }
@@ -86,7 +81,7 @@ void sf_spawn(const char *file, char *const argv[], uint32_t flags) {
       setsid();
     }
 
-    execvp(file, argv);
+    execvp(argv[0], argv);
     _exit(1);
   } else {
     if (!(flags & SF_FLAG_NOWAIT))
@@ -323,8 +318,8 @@ int main() {
         char path[PATH_MAX];
         realpath(entry->name, path);
 
-        char *const args[] = {"xdg-open", path, NULL};
-        sf_spawn("xdg-open", args, SF_FLAG_NOTRACE | SF_FLAG_NOWAIT);
+        char *const args[] = {SF_OPENER, path, NULL};
+        sf_spawn(args, SF_FLAG_NOTRACE | SF_FLAG_NOWAIT);
       } else {
         // TODO: handle links and stuff
       }
@@ -351,7 +346,7 @@ int main() {
       realpath(entry->name, path);
 
       char *const args[] = {SF_EDITOR, path, NULL};
-      sf_spawn(SF_EDITOR, args, SF_FLAG_TERM);
+      sf_spawn(args, SF_FLAG_TERM);
       break;
     }
     case '1':
