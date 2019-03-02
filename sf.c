@@ -47,6 +47,10 @@ typedef struct sf_view_t {
   sf_entry_t *entries;
 } sf_view_t;
 
+typedef struct sf_pane_t {
+  WINDOW *window;
+} sf_pane_t;
+
 // Path when the program was launched
 char sf_initial_path[PATH_MAX];
 
@@ -55,6 +59,8 @@ bool sf_should_quit;
 uint32_t sf_current_view;
 
 sf_view_t sf_views[SF_VIEW_COUNT];
+
+sf_pane_t sf_main_pane;
 
 /*
  * argv must be either NULL or a NULL terminated array
@@ -109,9 +115,8 @@ int sf_entry_cmp(const void *a, const void *b) {
   return strcoll(entry_a->name, entry_b->name);
 }
 
-void sf_get_entries(const char *path,
-                    uint32_t *entry_count,
-                    sf_entry_t *entries) {
+void sf_get_entries(
+    const char *path, uint32_t *entry_count, sf_entry_t *entries) {
   DIR *d = opendir(path);
   struct dirent *dir;
   if (d) {
@@ -157,15 +162,15 @@ void sf_get_entries(const char *path,
   }
 }
 
-void sf_color_on(short pair) {
+void sf_color_on(sf_pane_t *pane, short pair) {
   if (has_colors()) {
-    attron(COLOR_PAIR(pair));
+    wattron(pane->window, COLOR_PAIR(pair));
   }
 }
 
-void sf_color_off(short pair) {
+void sf_color_off(sf_pane_t *pane, short pair) {
   if (has_colors()) {
-    attroff(COLOR_PAIR(pair));
+    wattroff(pane->window, COLOR_PAIR(pair));
   }
 }
 
@@ -214,6 +219,12 @@ void sf_set_view(uint32_t view_index) {
   sf_view_activate(&sf_views[sf_current_view]);
 }
 
+void sf_pane_init(sf_pane_t *pane, int height, int width, int y, int x) {
+  pane->window = newwin(height, width, y, x);
+}
+
+void sf_pane_destroy(sf_pane_t *pane) { delwin(pane->window); }
+
 void sf_init() {
   sf_should_quit = false;
 
@@ -238,67 +249,72 @@ void sf_init() {
 
     init_pair(SF_HIGHLIGHT_PAIR, COLOR_BLUE, COLOR_BLACK);
   }
+
+  refresh();
+
+  sf_pane_init(&sf_main_pane, LINES, COLS, 0, 0);
 }
 
 void sf_destroy() {
   for (uint32_t i = 0; i < SF_VIEW_COUNT; i++) {
     sf_view_destroy(&sf_views[i]);
   }
+  sf_pane_destroy(&sf_main_pane);
   noraw();
   endwin();
 }
 
-void sf_draw() {
-  clear();
+void sf_draw(sf_pane_t *pane) {
+  wclear(pane->window);
   sf_view_t *view = &sf_views[sf_current_view];
 
-  printw("[");
+  wprintw(pane->window, "[");
   for (uint32_t i = 0; i < SF_VIEW_COUNT; i++) {
     if (i == sf_current_view) {
-      sf_color_on(SF_HIGHLIGHT_PAIR);
+      sf_color_on(pane, SF_HIGHLIGHT_PAIR);
     }
-    printw("%d", i + 1);
+    wprintw(pane->window, "%d", i + 1);
     if (i == sf_current_view) {
-      sf_color_off(SF_HIGHLIGHT_PAIR);
+      sf_color_off(pane, SF_HIGHLIGHT_PAIR);
     }
     if (i + 1 < SF_VIEW_COUNT) {
-      printw(" ");
+      wprintw(pane->window, " ");
     }
   }
-  printw("] - %s\n", view->path);
+  wprintw(pane->window, "] - %s\n", view->path);
 
   for (uint32_t i = 0; i < view->entry_count; i++) {
     if (i == view->selected_entry) {
-      attron(A_REVERSE);
+      wattron(pane->window, A_REVERSE);
     }
 
     if (view->entries[i].type == SF_ENTRY_DIRECTORY) {
-      sf_color_on(SF_HIGHLIGHT_PAIR);
+      sf_color_on(pane, SF_HIGHLIGHT_PAIR);
     }
 
-    printw("%s\n", view->entries[i].name);
+    wprintw(pane->window, "%s\n", view->entries[i].name);
 
     if (view->entries[i].type == SF_ENTRY_DIRECTORY) {
-      sf_color_off(SF_HIGHLIGHT_PAIR);
+      sf_color_off(pane, SF_HIGHLIGHT_PAIR);
     }
 
     if (i == view->selected_entry) {
-      attroff(A_REVERSE);
+      wattroff(pane->window, A_REVERSE);
     }
   }
 
-  refresh();
+  wrefresh(pane->window);
 }
 
 int main() {
   sf_init();
 
   while (!sf_should_quit) {
-    sf_draw();
+    sf_draw(&sf_main_pane);
 
     sf_view_t *view = &sf_views[sf_current_view];
 
-    char c;
+    int c;
     switch (c = getch()) {
     case 'h': {
       sf_view_set_path(view, "..");
@@ -364,9 +380,15 @@ int main() {
       }
       break;
     }
-    case 'q':
+    case 'q': {
       sf_should_quit = true;
       break;
+    }
+    case KEY_RESIZE: {
+      clear();
+      refresh();
+      break;
+    }
     }
   }
 
