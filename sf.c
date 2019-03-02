@@ -46,7 +46,6 @@ typedef struct sf_view_t {
   uint32_t selected_entry;
   uint32_t entry_count;
   sf_entry_t *entries;
-  uint32_t *pos_stack;
   uint32_t *offset_stack;
   uint32_t stack_size;
 } sf_view_t;
@@ -123,6 +122,25 @@ uint32_t sf_get_path_level(const char *path) {
   }
 
   return level;
+}
+
+void sf_get_top_dir_from_path(const char *path, char *dest) {
+  assert(strlen(path) > 0);
+
+  if (strlen(path) == 1 && strcmp(path, "/") == 0) {
+    strncpy(dest, path, strlen(path) + 1);
+    return;
+  }
+
+  uint32_t slash_index = 0;
+  for (uint32_t i = strlen(path) - 1; i >= 0; i--) {
+    if (path[i] == '/') {
+      slash_index = i;
+      break;
+    }
+  }
+
+  strncpy(dest, &path[slash_index + 1], strlen(path) - slash_index);
 }
 
 int sf_entry_cmp(const void *a, const void *b) {
@@ -216,14 +234,10 @@ void sf_view_update_stacks(sf_view_t *view) {
   view->stack_size = sf_get_path_level(view->path) + 2;
 
   if (old_stack_size < view->stack_size) {
-    view->pos_stack =
-        realloc(view->pos_stack, view->stack_size * sizeof(uint32_t));
-
     view->offset_stack =
         realloc(view->offset_stack, view->stack_size * sizeof(uint32_t));
 
     for (uint32_t i = old_stack_size; i < view->stack_size; i++) {
-      view->pos_stack[i] = 0;
       view->offset_stack[i] = 0;
     }
   }
@@ -245,12 +259,9 @@ void sf_view_set_selected_entry(sf_view_t *view, uint32_t entry_index) {
   uint32_t level = sf_get_path_level(view->path);
   assert(level < view->stack_size);
 
-  view->pos_stack[level] = entry_index;
-
   // When you change the current selected directory, reset the next one in
   // the stack
   assert((level + 1) < view->stack_size);
-  view->pos_stack[level + 1] = 0;
   view->offset_stack[level + 1] = 0;
 }
 
@@ -284,11 +295,9 @@ void sf_view_init(sf_view_t *view) {
   sf_view_set_path(view, sf_initial_path);
 
   view->stack_size = sf_get_path_level(view->path) + 2;
-  view->pos_stack = calloc(view->stack_size, sizeof(uint32_t));
   view->offset_stack = calloc(view->stack_size, sizeof(uint32_t));
 
   for (uint32_t i = 0; i < view->stack_size; i++) {
-    view->pos_stack[i] = 0;
     view->offset_stack[i] = 0;
   }
 }
@@ -298,7 +307,6 @@ void sf_view_destroy(sf_view_t *view) {
     free(view->entries);
   }
 
-  free(view->pos_stack);
   free(view->offset_stack);
 }
 
@@ -378,13 +386,6 @@ void sf_draw_header() {
     }
   }
   printw("] - %s", view->path);
-
-  /* uint32_t level = sf_get_path_level(view->path); */
-  /* printw( */
-  /*     " - Pos: %d, Level: %d - Stack size: %d", */
-  /*     view->pos_stack[level], */
-  /*     level, */
-  /*     view->stack_size); */
 }
 
 void sf_draw_pane(sf_pane_t *pane) {
@@ -455,30 +456,29 @@ int main() {
     int c;
     switch (c = getch()) {
     case 'h': {
+      // Go back a directory
+      char prev_name[NAME_MAX];
+      sf_get_top_dir_from_path(view->path, prev_name);
       sf_view_set_path(view, "..");
 
-      assert(sf_get_path_level(view->path) < view->stack_size);
-      sf_view_set_selected_entry(
-          view, view->pos_stack[sf_get_path_level(view->path)]);
+      for (uint32_t i = 0; i < view->entry_count; i++) {
+        if (strcmp(prev_name, view->entries[i].name) == 0) {
+          sf_view_set_selected_entry(view, i);
+        }
+      }
 
       break;
     }
     case 'l': {
       sf_entry_t *entry = &view->entries[view->selected_entry];
       if (entry->type == SF_ENTRY_DIRECTORY) {
+        // Go into directory
         char path[PATH_MAX];
         realpath(entry->name, path);
         sf_view_set_path(view, path);
 
         assert(sf_get_path_level(view->path) < view->stack_size);
-        sf_view_set_selected_entry(
-            view, view->pos_stack[sf_get_path_level(view->path)]);
-      } else if (entry->type == SF_ENTRY_FILE) {
-        char path[PATH_MAX];
-        realpath(entry->name, path);
-
-        char *const args[] = {SF_OPENER, path, NULL};
-        sf_spawn(args, SF_FLAG_NOTRACE | SF_FLAG_NOWAIT);
+        sf_view_set_selected_entry(view, 0);
       } else {
         // TODO: handle links and stuff
       }
@@ -495,6 +495,18 @@ int main() {
       // Move up
       if (view->selected_entry > 0) {
         sf_view_set_selected_entry(view, view->selected_entry - 1);
+      }
+      break;
+    }
+    case '\n': {
+      // Open file
+      sf_entry_t *entry = &view->entries[view->selected_entry];
+      if (entry->type == SF_ENTRY_FILE) {
+        char path[PATH_MAX];
+        realpath(entry->name, path);
+
+        char *const args[] = {SF_OPENER, path, NULL};
+        sf_spawn(args, SF_FLAG_NOTRACE | SF_FLAG_NOWAIT);
       }
       break;
     }
