@@ -12,12 +12,16 @@
 
 #define SF_VIEW_COUNT 4
 
+#define SF_HIGHLIGHT_PAIR 1
+#define SF_SELECTED_PAIR 2
+
 typedef struct sf_entry_t {
   char *name;
 } sf_entry_t;
 
 typedef struct sf_view_t {
   char path[PATH_MAX];
+  uint32_t selected_entry;
   uint32_t entry_count;
   sf_entry_t *entries;
 } sf_view_t;
@@ -57,6 +61,18 @@ void sf_get_entries(
   }
 }
 
+void sf_color_on(short pair) {
+  if (has_colors()) {
+    attron(COLOR_PAIR(pair));
+  }
+}
+
+void sf_color_off(short pair) {
+  if (has_colors()) {
+    attroff(COLOR_PAIR(pair));
+  }
+}
+
 void sf_entry_destroy(sf_entry_t *entry) {
   if (entry->name != NULL) {
     free(entry->name);
@@ -89,6 +105,7 @@ void sf_view_set_path(sf_view_t *view, const char *path) {
 void sf_view_init(sf_view_t *view) {
   view->entry_count = 0;
   view->entries = NULL;
+  view->selected_entry = 0;
   sf_view_set_path(view, sf_initial_path);
 }
 
@@ -126,22 +143,25 @@ void sf_init() {
 
   initscr();
 
+  raw();
+
+  // Hide cursor
+  curs_set(0);
+
   // TODO: handle lack of color support
-  if (has_colors() == FALSE) {
-    endwin();
-    printf("Your terminal does not support color\n");
-    exit(1);
+  if (has_colors()) {
+    start_color();
+
+    init_pair(SF_HIGHLIGHT_PAIR, COLOR_BLUE, COLOR_BLACK);
+    init_pair(SF_SELECTED_PAIR, COLOR_BLACK, COLOR_WHITE);
   }
-
-  start_color();
-
-  init_pair(1, COLOR_BLUE, COLOR_BLACK);
 }
 
 void sf_destroy() {
   for (uint32_t i = 0; i < SF_VIEW_COUNT; i++) {
     sf_view_destroy(&sf_views[i]);
   }
+  noraw();
   endwin();
 }
 
@@ -152,11 +172,11 @@ void sf_draw() {
   printw("[");
   for (uint32_t i = 0; i < SF_VIEW_COUNT; i++) {
     if (i == sf_current_view) {
-      attron(COLOR_PAIR(1));
+      sf_color_on(SF_HIGHLIGHT_PAIR);
     }
     printw("%d", i + 1);
     if (i == sf_current_view) {
-      attroff(COLOR_PAIR(1));
+      sf_color_off(SF_HIGHLIGHT_PAIR);
     }
     if (i + 1 < SF_VIEW_COUNT) {
       printw(" ");
@@ -165,7 +185,13 @@ void sf_draw() {
   printw("] - %s\n", view->path);
 
   for (uint32_t i = 0; i < view->entry_count; i++) {
+    if (i == view->selected_entry) {
+      sf_color_on(SF_SELECTED_PAIR);
+    }
     printw("%s\n", view->entries[i]);
+    if (i == view->selected_entry) {
+      sf_color_off(SF_SELECTED_PAIR);
+    }
   }
 
   refresh();
@@ -177,11 +203,28 @@ int main() {
   while (!sf_should_quit) {
     sf_draw();
 
+    sf_view_t *view = &sf_views[sf_current_view];
+
     char c;
     switch (c = getch()) {
-    case 'h':
-      sf_view_set_path(&sf_views[sf_current_view], "..");
+    case 'h': {
+      sf_view_set_path(view, "..");
       break;
+    }
+    case 'j': {
+      // Move down
+      if (view->selected_entry < view->entry_count - 1) {
+        view->selected_entry++;
+      }
+      break;
+    }
+    case 'k': {
+      // Move up
+      if (view->selected_entry > 0) {
+        view->selected_entry--;
+      }
+      break;
+    }
     case '1':
     case '2':
     case '3':
