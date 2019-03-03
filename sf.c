@@ -370,7 +370,7 @@ void sf_view_update_entries(sf_view_t *view) {
   sf_get_entries(".", &view->entry_count, view->entries);
 }
 
-void sf_view_set_path(sf_view_t *view, const char *path) {
+bool sf_view_set_path(sf_view_t *view, const char *path) {
   char rpath[PATH_MAX];
   realpath(path, rpath);
   if (chdir(rpath) == 0) {
@@ -379,7 +379,10 @@ void sf_view_set_path(sf_view_t *view, const char *path) {
     sf_view_update_entries(view);
     sf_view_update_stacks(view);
     chdir(sf_views[sf_current_view].path);
+    return true;
   }
+
+  return false;
 }
 
 void sf_view_init(sf_view_t *view) {
@@ -522,7 +525,8 @@ void sf_draw_header(sf_pane_t *pane) {
 void sf_draw_side_pane(sf_pane_t *pane) {
   wclear(pane->window);
 
-  int height = getmaxy(pane->window);
+  int width, height;
+  getmaxyx(pane->window, height, width);
 
   if (sf_side_view.has_dir) {
 
@@ -544,7 +548,7 @@ void sf_draw_side_pane(sf_pane_t *pane) {
 
         char row[PATH_MAX] = "";
         strcat(row, " ");
-        strcat(row, sf_side_view.entries[i].name);
+        strncat(row, sf_side_view.entries[i].name, width - 2 - 1);
 
         mvwprintw(pane->window, y, x, "%s", row);
 
@@ -601,7 +605,7 @@ void sf_draw_main_pane(sf_pane_t *pane) {
 
       char row[PATH_MAX] = "";
       strcat(row, "  ");
-      strcat(row, view->entries[i].name);
+      strncat(row, view->entries[i].name, width - 2 - 2);
 
       mvwprintw(pane->window, y, x, "%s", row);
 
@@ -646,14 +650,13 @@ int main() {
       // Go back a directory
       char prev_name[NAME_MAX];
       sf_get_top_dir_from_path(view->path, prev_name);
-      sf_view_set_path(view, "..");
-
-      for (uint32_t i = 0; i < view->entry_count; i++) {
-        if (strcmp(prev_name, view->entries[i].name) == 0) {
-          sf_view_set_selected_entry(view, i);
+      if (sf_view_set_path(view, "..")) {
+        for (uint32_t i = 0; i < view->entry_count; i++) {
+          if (strcmp(prev_name, view->entries[i].name) == 0) {
+            sf_view_set_selected_entry(view, i);
+          }
         }
       }
-
       break;
     }
     case SF_KEY_FORWARD: {
@@ -662,10 +665,9 @@ int main() {
         // Go into directory
         char path[PATH_MAX];
         realpath(entry->name, path);
-        sf_view_set_path(view, path);
-
-        assert(sf_get_path_level(view->path) < view->stack_size);
-        sf_view_set_selected_entry(view, 0);
+        if (sf_view_set_path(view, path)) {
+          sf_view_set_selected_entry(view, 0);
+        }
       } else {
         // TODO: handle links and stuff
       }
