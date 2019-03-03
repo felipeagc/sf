@@ -205,23 +205,24 @@ void sf_get_entries(
 
       while ((dir = readdir(d)) != NULL) {
         if (IS_VALID_ENTRY(dir->d_name)) {
-          uint32_t current = i++;
-          strncpy(entries[current].name, dir->d_name, strlen(dir->d_name) + 1);
+          strncpy(entries[i].name, dir->d_name, strlen(dir->d_name) + 1);
 
           switch (dir->d_type) {
           case DT_REG:
-            entries[current].type = SF_ENTRY_FILE;
+            entries[i].type = SF_ENTRY_FILE;
             break;
           case DT_DIR:
-            entries[current].type = SF_ENTRY_DIRECTORY;
+            entries[i].type = SF_ENTRY_DIRECTORY;
             break;
           case DT_LNK:
-            entries[current].type = SF_ENTRY_LINK;
+            entries[i].type = SF_ENTRY_LINK;
             break;
           default:
-            entries[current].type = SF_ENTRY_UNKNOWN;
+            entries[i].type = SF_ENTRY_UNKNOWN;
             break;
           }
+
+          i++;
         }
       }
     }
@@ -280,6 +281,10 @@ void sf_side_view_set_path(sf_side_view_t *side_view, const char *path) {
     sf_get_entries(".", &side_view->entry_count, side_view->entries);
 
     chdir(sf_views[sf_current_view].path);
+    side_view->has_dir = true;
+  } else {
+    side_view->has_dir = false;
+    side_view->entry_count = 0;
   }
 }
 
@@ -297,6 +302,11 @@ void sf_side_view_destroy(sf_side_view_t *side_view) {
 }
 
 void sf_side_view_update(sf_side_view_t *side_view, sf_view_t *view) {
+  if (view->entry_count <= 0) {
+    side_view->has_dir = false;
+    return;
+  }
+
   sf_entry_t *entry = &view->entries[view->selected_entry];
   if (entry->type == SF_ENTRY_DIRECTORY) {
     // Show directory in side pane
@@ -305,7 +315,6 @@ void sf_side_view_update(sf_side_view_t *side_view, sf_view_t *view) {
     strcat(path, "/");
     strcat(path, entry->name);
     sf_side_view_set_path(side_view, path);
-    side_view->has_dir = true;
   } else {
     side_view->has_dir = false;
   }
@@ -357,10 +366,6 @@ void sf_view_update_entries(sf_view_t *view) {
   view->entries =
       realloc(view->entries, sizeof(sf_entry_t) * view->entry_count);
   sf_get_entries(".", &view->entry_count, view->entries);
-
-  if (view->entry_count <= 1) {
-    sf_view_set_selected_entry(view, 0);
-  }
 }
 
 void sf_view_set_path(sf_view_t *view, const char *path) {
@@ -437,6 +442,7 @@ void sf_init() {
 
   initscr();
 
+  noecho();
   cbreak();
   raw();
 
@@ -515,18 +521,24 @@ void sf_draw_side_pane(sf_pane_t *pane) {
   int height = getmaxy(pane->window);
 
   if (sf_side_view.has_dir) {
-    for (uint32_t i = 0;
-         i < (sf_side_view.entry_count > height ? height
-                                                : sf_side_view.entry_count);
-         i++) {
-      if (sf_side_view.entries[i].type == SF_ENTRY_DIRECTORY) {
-        sf_pcolor_on(pane, SF_HIGHLIGHT_PAIR);
-      }
+    if (sf_side_view.entry_count <= 0) {
+      sf_pcolor_on(pane, SF_EMPTY_PAIR);
+      mvwprintw(pane->window, 0, 0, "empty");
+      sf_pcolor_off(pane, SF_EMPTY_PAIR);
+    } else {
+      for (uint32_t i = 0;
+           i < (sf_side_view.entry_count > height ? height
+                                                  : sf_side_view.entry_count);
+           i++) {
+        if (sf_side_view.entries[i].type == SF_ENTRY_DIRECTORY) {
+          sf_pcolor_on(pane, SF_HIGHLIGHT_PAIR);
+        }
 
-      mvwprintw(pane->window, i, 0, "%s", sf_side_view.entries[i].name);
+        mvwprintw(pane->window, i, 0, "%s", sf_side_view.entries[i].name);
 
-      if (sf_side_view.entries[i].type == SF_ENTRY_DIRECTORY) {
-        sf_pcolor_off(pane, SF_HIGHLIGHT_PAIR);
+        if (sf_side_view.entries[i].type == SF_ENTRY_DIRECTORY) {
+          sf_pcolor_off(pane, SF_HIGHLIGHT_PAIR);
+        }
       }
     }
   }
@@ -544,8 +556,8 @@ void sf_draw_main_pane(sf_pane_t *pane) {
 
   if (view->entry_count == 0) {
     sf_pcolor_on(pane, SF_EMPTY_PAIR);
-    mvwprintw(pane->window, 1, 0, "empty");
-    sf_pcolor_on(pane, SF_EMPTY_PAIR);
+    mvwprintw(pane->window, 0, 0, "empty");
+    sf_pcolor_off(pane, SF_EMPTY_PAIR);
   } else {
     uint32_t level = sf_get_path_level(view->path);
     assert(level < view->stack_size);
@@ -571,10 +583,11 @@ void sf_draw_main_pane(sf_pane_t *pane) {
 
       mvwprintw(pane->window, y, 0, "%s", view->entries[i].name);
 
-      if (i == view->selected_entry) {
-        uint32_t spaces = width - strlen(view->entries[i].name);
+      uint32_t length = strlen(view->entries[i].name);
+      if (i == view->selected_entry && length < width) {
+        uint32_t spaces = width - length;
         for (uint32_t j = 0; j < spaces; j++) {
-          mvwprintw(pane->window, y, strlen(view->entries[i].name) + j, " ");
+          mvwprintw(pane->window, y, length + j, " ");
         }
       }
 
@@ -676,6 +689,7 @@ int main() {
           view->entries[view->selected_entry].name,
           strlen(view->entries[view->selected_entry].name) + 1);
       sf_view_update_entries(view);
+      sf_view_set_selected_entry(view, 0);
       for (uint32_t i = 0; i < view->entry_count; i++) {
         if (strcmp(name, view->entries[i].name) == 0) {
           sf_view_set_selected_entry(view, i);
