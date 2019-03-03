@@ -26,6 +26,7 @@
 #define SF_KEY_FORWARD 'l'
 #define SF_KEY_UP 'k'
 #define SF_KEY_DOWN 'j'
+#define SF_KEY_TOGGLE_HIDDEN 'H'
 
 #define SF_OPENER "xdg-open"
 #define SF_EDITOR "nvim"
@@ -66,6 +67,8 @@ typedef struct sf_pane_t {
 char sf_initial_path[PATH_MAX];
 
 bool sf_should_quit;
+
+bool sf_show_hidden_files;
 
 uint32_t sf_current_view;
 
@@ -170,10 +173,15 @@ void sf_get_entries(
     const char *path, uint32_t *entry_count, sf_entry_t *entries) {
   DIR *d = opendir(path);
   struct dirent *dir;
+
+#define IS_VALID_ENTRY(name)                                                   \
+  (strcmp(name, ".") != 0 && strcmp(name, "..") != 0 &&                        \
+   (sf_show_hidden_files ? true : (name[0] != '.')))
+
   if (d) {
     *entry_count = 0;
     while ((dir = readdir(d)) != NULL) {
-      if (strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0) {
+      if (IS_VALID_ENTRY(dir->d_name)) {
         (*entry_count)++;
       }
     }
@@ -183,7 +191,7 @@ void sf_get_entries(
       uint32_t i = 0;
 
       while ((dir = readdir(d)) != NULL) {
-        if (strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0) {
+        if (IS_VALID_ENTRY(dir->d_name)) {
           uint32_t current = i++;
           strncpy(entries[current].name, dir->d_name, strlen(dir->d_name) + 1);
 
@@ -338,6 +346,7 @@ void sf_pane_destroy(sf_pane_t *pane) { delwin(pane->window); }
 
 void sf_init() {
   sf_should_quit = false;
+  sf_show_hidden_files = false;
 
   getcwd(sf_initial_path, sizeof(sf_initial_path));
 
@@ -526,6 +535,22 @@ int main() {
 
       char *const args[] = {SF_EDITOR, path, NULL};
       sf_spawn(args, SF_FLAG_TERM);
+      break;
+    }
+    case SF_KEY_TOGGLE_HIDDEN: {
+      sf_show_hidden_files = !sf_show_hidden_files;
+      char name[NAME_MAX];
+      strncpy(
+          name,
+          view->entries[view->selected_entry].name,
+          strlen(view->entries[view->selected_entry].name) + 1);
+      sf_view_update_entries(view);
+      for (uint32_t i = 0; i < view->entry_count; i++) {
+        if (strcmp(name, view->entries[i].name) == 0) {
+          sf_view_set_selected_entry(view, i);
+          break;
+        }
+      }
       break;
     }
     case '1':
