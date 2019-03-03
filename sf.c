@@ -171,11 +171,11 @@ int sf_entry_cmp(const void *a, const void *b) {
   sf_entry_t *entry_a = (sf_entry_t *)a;
   sf_entry_t *entry_b = (sf_entry_t *)b;
 
-  if (entry_a->type == SF_ENTRY_DIRECTORY && entry_b->type == SF_ENTRY_FILE) {
+  if (entry_a->type == SF_ENTRY_DIRECTORY && entry_b->type != SF_ENTRY_DIRECTORY) {
     return -1;
   }
 
-  if (entry_a->type == SF_ENTRY_FILE && entry_b->type == SF_ENTRY_DIRECTORY) {
+  if (entry_a->type != SF_ENTRY_DIRECTORY && entry_b->type == SF_ENTRY_DIRECTORY) {
     return 1;
   }
 
