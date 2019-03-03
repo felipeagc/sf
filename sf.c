@@ -59,6 +59,12 @@ typedef struct sf_view_t {
   uint32_t stack_size;
 } sf_view_t;
 
+typedef struct sf_side_view_t {
+  char path[PATH_MAX];
+  uint32_t entry_count;
+  sf_entry_t *entries;
+} sf_side_view_t;
+
 typedef struct sf_pane_t {
   WINDOW *window;
 } sf_pane_t;
@@ -74,7 +80,10 @@ uint32_t sf_current_view;
 
 sf_view_t sf_views[SF_VIEW_COUNT];
 
+sf_side_view_t sf_side_view;
+
 sf_pane_t sf_main_pane;
+sf_pane_t sf_side_pane;
 
 /*
  * argv must be either NULL or a NULL terminated array
@@ -245,6 +254,40 @@ void sf_pcolor_off(sf_pane_t *pane, short pair) {
   }
 }
 
+void sf_side_view_set_path(sf_side_view_t *side_view, const char *path) {
+  if (strlen(path) == 0) {
+    side_view->entry_count = 0;
+    free(side_view->entries);
+    side_view->entries = NULL;
+    return;
+  }
+
+  char rpath[PATH_MAX];
+  realpath(path, rpath);
+  if (chdir(rpath) == 0) {
+    // Success
+    strncpy(side_view->path, rpath, strlen(rpath) + 1);
+    sf_get_entries(".", &side_view->entry_count, NULL);
+    side_view->entries = realloc(
+        side_view->entries, sizeof(sf_entry_t) * side_view->entry_count);
+    sf_get_entries(".", &side_view->entry_count, side_view->entries);
+
+    chdir(sf_views[sf_current_view].path);
+  }
+}
+
+void sf_side_view_init(sf_side_view_t *side_view) {
+  side_view->entry_count = 0;
+  side_view->entries = NULL;
+  sf_side_view_set_path(side_view, "");
+}
+
+void sf_side_view_destroy(sf_side_view_t *side_view) {
+  if (side_view->entries != NULL) {
+    free(side_view->entries);
+  }
+}
+
 void sf_view_update_stacks(sf_view_t *view) {
   uint32_t old_stack_size = view->stack_size;
   view->stack_size = sf_get_path_level(view->path) + 2;
@@ -279,6 +322,16 @@ void sf_view_set_selected_entry(sf_view_t *view, uint32_t entry_index) {
   // the stack
   assert((level + 1) < view->stack_size);
   view->offset_stack[level + 1] = 0;
+
+  sf_entry_t *entry = &view->entries[view->selected_entry];
+  if (entry->type == SF_ENTRY_DIRECTORY) {
+    // Show directory in side pane
+    char path[PATH_MAX];
+    snprintf(path, PATH_MAX, "%s%s%s", view->path, "/", entry->name);
+    sf_side_view_set_path(&sf_side_view, path);
+  } else {
+    sf_side_view_set_path(&sf_side_view, "");
+  }
 }
 
 void sf_view_update_entries(sf_view_t *view) {
@@ -298,9 +351,9 @@ void sf_view_set_path(sf_view_t *view, const char *path) {
   if (chdir(rpath) == 0) {
     // Success
     strncpy(view->path, rpath, strlen(rpath) + 1);
-    chdir(sf_views[sf_current_view].path);
     sf_view_update_entries(view);
     sf_view_update_stacks(view);
+    chdir(sf_views[sf_current_view].path);
   }
 }
 
@@ -342,6 +395,11 @@ void sf_pane_init(sf_pane_t *pane, int height, int width, int y, int x) {
   pane->window = newwin(height, width, y, x);
 }
 
+void sf_pane_resize(sf_pane_t *pane, int height, int width, int y, int x) {
+  delwin(pane->window);
+  pane->window = newwin(height, width, y, x);
+}
+
 void sf_pane_destroy(sf_pane_t *pane) { delwin(pane->window); }
 
 void sf_init() {
@@ -353,6 +411,8 @@ void sf_init() {
   for (uint32_t i = 0; i < SF_VIEW_COUNT; i++) {
     sf_view_init(&sf_views[i]);
   }
+
+  sf_side_view_init(&sf_side_view);
 
   sf_set_view(0);
 
@@ -374,13 +434,17 @@ void sf_init() {
 
   refresh();
 
-  sf_pane_init(&sf_main_pane, LINES, COLS, 0, 0);
+  sf_pane_init(&sf_main_pane, LINES, COLS / 2, 0, 0);
+  sf_pane_init(
+      &sf_side_pane, LINES, COLS - (COLS / 2) - 1, 1, COLS - (COLS / 2) + 1);
 }
 
 void sf_destroy() {
   for (uint32_t i = 0; i < SF_VIEW_COUNT; i++) {
     sf_view_destroy(&sf_views[i]);
   }
+  sf_side_view_destroy(&sf_side_view);
+  sf_pane_destroy(&sf_side_pane);
   sf_pane_destroy(&sf_main_pane);
   noraw();
   endwin();
@@ -405,8 +469,35 @@ void sf_draw_header() {
   printw("] - %s", view->path);
 }
 
-void sf_draw_pane(sf_pane_t *pane) {
+void sf_draw_side_pane(sf_pane_t *pane) {
   wclear(pane->window);
+
+  int width, height;
+  getmaxyx(pane->window, height, width);
+
+  if (sf_side_view.entry_count > 0) {
+    for (uint32_t i = 0;
+         i < (sf_side_view.entry_count > height ? height
+                                                : sf_side_view.entry_count);
+         i++) {
+      if (sf_side_view.entries[i].type == SF_ENTRY_DIRECTORY) {
+        sf_pcolor_on(pane, SF_HIGHLIGHT_PAIR);
+      }
+
+      mvwprintw(pane->window, i, 0, "%s", sf_side_view.entries[i].name);
+
+      if (sf_side_view.entries[i].type == SF_ENTRY_DIRECTORY) {
+        sf_pcolor_off(pane, SF_HIGHLIGHT_PAIR);
+      }
+    }
+  }
+
+  wrefresh(pane->window);
+}
+
+void sf_draw_main_pane(sf_pane_t *pane) {
+  wclear(pane->window);
+
   sf_view_t *view = &sf_views[sf_current_view];
 
   int width, height;
@@ -466,9 +557,10 @@ int main() {
 
   while (!sf_should_quit) {
     sf_draw_header();
-    sf_draw_pane(&sf_main_pane);
-
     sf_view_t *view = &sf_views[sf_current_view];
+
+    sf_draw_main_pane(&sf_main_pane);
+    sf_draw_side_pane(&sf_side_pane);
 
     int c;
     switch (c = getch()) {
@@ -573,6 +665,13 @@ int main() {
       break;
     }
     case KEY_RESIZE: {
+      sf_pane_resize(&sf_main_pane, LINES, COLS / 2, 0, 0);
+      sf_pane_resize(
+          &sf_side_pane,
+          LINES,
+          COLS - (COLS / 2) - 1,
+          0,
+          COLS - (COLS / 2) + 1);
       clear();
       refresh();
       break;
