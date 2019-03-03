@@ -1,3 +1,4 @@
+#include "config.h"
 #include <assert.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -14,22 +15,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define SF_VIEW_COUNT 4
-
 #define SF_HIGHLIGHT_PAIR 1
 #define SF_EMPTY_PAIR 2
-
-#define SF_KEY_QUIT 'q'
-#define SF_KEY_OPEN '\n'
-#define SF_KEY_EDIT 'e'
-#define SF_KEY_BACKWARD 'h'
-#define SF_KEY_FORWARD 'l'
-#define SF_KEY_UP 'k'
-#define SF_KEY_DOWN 'j'
-#define SF_KEY_TOGGLE_HIDDEN 'H'
-
-#define SF_OPENER "xdg-open"
-#define SF_EDITOR "nvim"
 
 /*
  * sf_spawn flags
