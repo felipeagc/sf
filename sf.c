@@ -19,6 +19,14 @@
 #define SF_HIGHLIGHT_PAIR 1
 #define SF_EMPTY_PAIR 2
 
+#define SF_KEY_QUIT 'q'
+#define SF_KEY_OPEN '\n'
+#define SF_KEY_EDIT 'e'
+#define SF_KEY_BACKWARD 'h'
+#define SF_KEY_FORWARD 'l'
+#define SF_KEY_UP 'k'
+#define SF_KEY_DOWN 'j'
+
 #define SF_OPENER "xdg-open"
 #define SF_EDITOR "nvim"
 
@@ -455,7 +463,7 @@ int main() {
 
     int c;
     switch (c = getch()) {
-    case 'h': {
+    case SF_KEY_BACKWARD: {
       // Go back a directory
       char prev_name[NAME_MAX];
       sf_get_top_dir_from_path(view->path, prev_name);
@@ -469,7 +477,7 @@ int main() {
 
       break;
     }
-    case 'l': {
+    case SF_KEY_FORWARD: {
       sf_entry_t *entry = &view->entries[view->selected_entry];
       if (entry->type == SF_ENTRY_DIRECTORY) {
         // Go into directory
@@ -484,21 +492,21 @@ int main() {
       }
       break;
     }
-    case 'j': {
+    case SF_KEY_DOWN: {
       // Move down
       if (view->selected_entry < view->entry_count - 1) {
         sf_view_set_selected_entry(view, view->selected_entry + 1);
       }
       break;
     }
-    case 'k': {
+    case SF_KEY_UP: {
       // Move up
       if (view->selected_entry > 0) {
         sf_view_set_selected_entry(view, view->selected_entry - 1);
       }
       break;
     }
-    case '\n': {
+    case SF_KEY_OPEN: {
       // Open file
       sf_entry_t *entry = &view->entries[view->selected_entry];
       if (entry->type == SF_ENTRY_FILE) {
@@ -510,7 +518,7 @@ int main() {
       }
       break;
     }
-    case 'e': {
+    case SF_KEY_EDIT: {
       sf_entry_t *entry = &view->entries[view->selected_entry];
 
       char path[PATH_MAX];
@@ -535,7 +543,7 @@ int main() {
       }
       break;
     }
-    case 'q': {
+    case SF_KEY_QUIT: {
       sf_should_quit = true;
       break;
     }
