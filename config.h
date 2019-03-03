@@ -15,4 +15,8 @@
 #define SF_OPENER "xdg-open"
 #define SF_EDITOR "nvim"
 
+#define SF_PANE_RATIO (3.0 / 5.0)
+
+#define SF_DRAW_BORDERS
+
 #endif

@@ -30,15 +30,15 @@
 #define SF_HEADER_Y 0
 #define SF_HEADER_X 0
 
-#define SF_MAIN_PANE_WIDTH (COLS / 2)
-#define SF_MAIN_PANE_HEIGHT LINES
+#define SF_MAIN_PANE_WIDTH (int)(COLS * (SF_PANE_RATIO))
+#define SF_MAIN_PANE_HEIGHT (LINES - SF_HEADER_HEIGHT)
 #define SF_MAIN_PANE_Y 1
 #define SF_MAIN_PANE_X 0
 
-#define SF_SIDE_PANE_WIDTH COLS - (COLS / 2)
-#define SF_SIDE_PANE_HEIGHT LINES
+#define SF_SIDE_PANE_WIDTH (COLS - SF_MAIN_PANE_WIDTH)
+#define SF_SIDE_PANE_HEIGHT (LINES - SF_HEADER_HEIGHT)
 #define SF_SIDE_PANE_Y 1
-#define SF_SIDE_PANE_X (SF_MAIN_PANE_WIDTH + 1)
+#define SF_SIDE_PANE_X (SF_MAIN_PANE_WIDTH)
 
 typedef enum sf_entry_type_t {
   SF_ENTRY_FILE,
@@ -171,11 +171,13 @@ int sf_entry_cmp(const void *a, const void *b) {
   sf_entry_t *entry_a = (sf_entry_t *)a;
   sf_entry_t *entry_b = (sf_entry_t *)b;
 
-  if (entry_a->type == SF_ENTRY_DIRECTORY && entry_b->type != SF_ENTRY_DIRECTORY) {
+  if (entry_a->type == SF_ENTRY_DIRECTORY &&
+      entry_b->type != SF_ENTRY_DIRECTORY) {
     return -1;
   }
 
-  if (entry_a->type != SF_ENTRY_DIRECTORY && entry_b->type == SF_ENTRY_DIRECTORY) {
+  if (entry_a->type != SF_ENTRY_DIRECTORY &&
+      entry_b->type == SF_ENTRY_DIRECTORY) {
     return 1;
   }
 
@@ -501,16 +503,18 @@ void sf_draw_header(sf_pane_t *pane) {
   for (uint32_t i = 0; i < SF_VIEW_COUNT; i++) {
     if (i == sf_current_view) {
       sf_pcolor_on(pane, SF_HIGHLIGHT_PAIR);
+      wattron(pane->window, A_REVERSE);
     }
     wprintw(pane->window, "%d", i + 1);
     if (i == sf_current_view) {
+      wattroff(pane->window, A_REVERSE);
       sf_pcolor_off(pane, SF_HIGHLIGHT_PAIR);
     }
     if (i + 1 < SF_VIEW_COUNT) {
       wprintw(pane->window, " ");
     }
   }
-  wprintw(pane->window, "] - %s", view->path);
+  wprintw(pane->window, "] %s", view->path);
 
   wrefresh(pane->window);
 }
@@ -521,9 +525,10 @@ void sf_draw_side_pane(sf_pane_t *pane) {
   int height = getmaxy(pane->window);
 
   if (sf_side_view.has_dir) {
+
     if (sf_side_view.entry_count <= 0) {
       sf_pcolor_on(pane, SF_EMPTY_PAIR);
-      mvwprintw(pane->window, 0, 0, "empty");
+      mvwprintw(pane->window, 1, 2, "empty");
       sf_pcolor_off(pane, SF_EMPTY_PAIR);
     } else {
       for (uint32_t i = 0;
@@ -534,7 +539,14 @@ void sf_draw_side_pane(sf_pane_t *pane) {
           sf_pcolor_on(pane, SF_HIGHLIGHT_PAIR);
         }
 
-        mvwprintw(pane->window, i, 0, "%s", sf_side_view.entries[i].name);
+        int y = i + 1;
+        int x = 1;
+
+        char row[PATH_MAX] = "";
+        strcat(row, " ");
+        strcat(row, sf_side_view.entries[i].name);
+
+        mvwprintw(pane->window, y, x, "%s", row);
 
         if (sf_side_view.entries[i].type == SF_ENTRY_DIRECTORY) {
           sf_pcolor_off(pane, SF_HIGHLIGHT_PAIR);
@@ -542,6 +554,10 @@ void sf_draw_side_pane(sf_pane_t *pane) {
       }
     }
   }
+
+#ifdef SF_DRAW_BORDERS
+  box(pane->window, 0, 0);
+#endif
 
   wrefresh(pane->window);
 }
@@ -553,10 +569,11 @@ void sf_draw_main_pane(sf_pane_t *pane) {
 
   int width, height;
   getmaxyx(pane->window, height, width);
+  height--; // border
 
   if (view->entry_count == 0) {
     sf_pcolor_on(pane, SF_EMPTY_PAIR);
-    mvwprintw(pane->window, 0, 0, "empty");
+    mvwprintw(pane->window, 1, 2, "empty");
     sf_pcolor_off(pane, SF_EMPTY_PAIR);
   } else {
     uint32_t level = sf_get_path_level(view->path);
@@ -579,11 +596,16 @@ void sf_draw_main_pane(sf_pane_t *pane) {
         sf_pcolor_on(pane, SF_HIGHLIGHT_PAIR);
       }
 
-      int y = i - *offset;
+      int y = i - *offset + 1;
+      int x = 0;
 
-      mvwprintw(pane->window, y, 0, "%s", view->entries[i].name);
+      char row[PATH_MAX] = "";
+      strcat(row, "  ");
+      strcat(row, view->entries[i].name);
 
-      uint32_t length = strlen(view->entries[i].name);
+      mvwprintw(pane->window, y, x, "%s", row);
+
+      uint32_t length = strlen(row) + x;
       if (i == view->selected_entry && length < width) {
         uint32_t spaces = width - length;
         for (uint32_t j = 0; j < spaces; j++) {
@@ -600,6 +622,10 @@ void sf_draw_main_pane(sf_pane_t *pane) {
       }
     }
   }
+
+#ifdef SF_DRAW_BORDERS
+  box(pane->window, 0, 0);
+#endif
 
   wrefresh(pane->window);
 }
