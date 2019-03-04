@@ -57,8 +57,6 @@ typedef struct sf_view_t {
   uint32_t selected_entry;
   uint32_t entry_count;
   sf_entry_t *entries;
-  uint32_t *offset_stack;
-  uint32_t stack_size;
 } sf_view_t;
 
 typedef struct sf_side_view_t {
@@ -325,20 +323,6 @@ void sf_side_view_update(sf_side_view_t *side_view, sf_view_t *view) {
 /*
  * View functions
  */
-void sf_view_update_stacks(sf_view_t *view) {
-  uint32_t old_stack_size = view->stack_size;
-  view->stack_size = sf_get_path_level(view->path) + 2;
-
-  if (old_stack_size < view->stack_size) {
-    view->offset_stack =
-        realloc(view->offset_stack, view->stack_size * sizeof(uint32_t));
-
-    for (uint32_t i = old_stack_size; i < view->stack_size; i++) {
-      view->offset_stack[i] = 0;
-    }
-  }
-}
-
 void sf_view_set_selected_entry(sf_view_t *view, uint32_t entry_index) {
   view->selected_entry = entry_index;
 
@@ -349,16 +333,6 @@ void sf_view_set_selected_entry(sf_view_t *view, uint32_t entry_index) {
   if (entry_index < 0) {
     entry_index = 0;
   }
-
-  sf_view_update_stacks(view);
-
-  uint32_t level = sf_get_path_level(view->path);
-  assert(level < view->stack_size);
-
-  // When you change the current selected directory, reset the next one in
-  // the stack
-  assert((level + 1) < view->stack_size);
-  view->offset_stack[level + 1] = 0;
 
   sf_side_view_update(&sf_side_view, view);
 }
@@ -377,7 +351,6 @@ bool sf_view_set_path(sf_view_t *view, const char *path) {
     // Success
     strncpy(view->path, rpath, strlen(rpath) + 1);
     sf_view_update_entries(view);
-    sf_view_update_stacks(view);
     chdir(sf_views[sf_current_view].path);
     return true;
   }
@@ -390,21 +363,12 @@ void sf_view_init(sf_view_t *view) {
   view->entries = NULL;
   view->selected_entry = 0;
   sf_view_set_path(view, sf_initial_path);
-
-  view->stack_size = sf_get_path_level(view->path) + 2;
-  view->offset_stack = calloc(view->stack_size, sizeof(uint32_t));
-
-  for (uint32_t i = 0; i < view->stack_size; i++) {
-    view->offset_stack[i] = 0;
-  }
 }
 
 void sf_view_destroy(sf_view_t *view) {
   if (view->entries != NULL) {
     free(view->entries);
   }
-
-  free(view->offset_stack);
 }
 
 void sf_set_view(uint32_t view_index) {
@@ -497,7 +461,7 @@ void sf_destroy() {
 }
 
 void sf_draw_header(sf_pane_t *pane) {
-  wclear(pane->window);
+  werase(pane->window);
 
   sf_view_t *view = &sf_views[sf_current_view];
   wmove(pane->window, 0, 0);
@@ -523,7 +487,7 @@ void sf_draw_header(sf_pane_t *pane) {
 }
 
 void sf_draw_side_pane(sf_pane_t *pane) {
-  wclear(pane->window);
+  werase(pane->window);
 
   int width, height;
   getmaxyx(pane->window, height, width);
@@ -567,7 +531,7 @@ void sf_draw_side_pane(sf_pane_t *pane) {
 }
 
 void sf_draw_main_pane(sf_pane_t *pane) {
-  wclear(pane->window);
+  werase(pane->window);
 
   sf_view_t *view = &sf_views[sf_current_view];
 
@@ -580,18 +544,27 @@ void sf_draw_main_pane(sf_pane_t *pane) {
     mvwprintw(pane->window, 1, 2, "empty");
     sf_pcolor_off(pane, SF_EMPTY_PAIR);
   } else {
-    uint32_t level = sf_get_path_level(view->path);
-    assert(level < view->stack_size);
-    uint32_t *offset = &view->offset_stack[level];
+    int first = view->selected_entry - (height / 2);
+    first = (first < 0) ? 0 : first;
 
-    if (view->selected_entry < *offset) {
-      *offset = view->selected_entry;
+    int last = first + height;
+    last = (last > view->entry_count) ? view->entry_count : last;
+
+    if ((((view->entry_count) - view->selected_entry) < height / 2) &&
+        (view->entry_count > height)) {
+      last = view->entry_count;
+      first = last - height + 1;
     }
 
-    if (view->selected_entry >= *offset + height - 1) {
-      *offset = view->selected_entry - height + 2;
+    if (view->entry_count < height) {
+      first = 0;
+      last = view->entry_count;
     }
-    for (uint32_t i = *offset; i < view->entry_count; i++) {
+
+    int y = 1;
+    int x = 0;
+
+    for (uint32_t i = first; i < last; i++) {
       if (i == view->selected_entry) {
         wattron(pane->window, A_REVERSE);
       }
@@ -599,9 +572,6 @@ void sf_draw_main_pane(sf_pane_t *pane) {
       if (view->entries[i].type == SF_ENTRY_DIRECTORY) {
         sf_pcolor_on(pane, SF_HIGHLIGHT_PAIR);
       }
-
-      int y = i - *offset + 1;
-      int x = 0;
 
       char row[PATH_MAX] = "";
       strcat(row, "  ");
@@ -624,6 +594,8 @@ void sf_draw_main_pane(sf_pane_t *pane) {
       if (i == view->selected_entry) {
         wattroff(pane->window, A_REVERSE);
       }
+
+      y++;
     }
   }
 
@@ -764,7 +736,7 @@ int main() {
           SF_SIDE_PANE_WIDTH,
           SF_SIDE_PANE_Y,
           SF_SIDE_PANE_X);
-      clear();
+      erase();
       refresh();
       break;
     }
